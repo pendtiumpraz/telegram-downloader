@@ -11,7 +11,7 @@
  */
 
 (() => {
-const TG_VERSION = '1.14.0';
+const TG_VERSION = '1.15.0';
 
 if (typeof window.__WAN_TG_TEARDOWN__ === 'function') {
   try { window.__WAN_TG_TEARDOWN__(); } catch {}
@@ -1101,11 +1101,54 @@ async function runOneChat(settings, { offset = null, title = null } = {}) {
     /** Buka item ber-mid ini dari grid (pembuka pertama, atau penyelarasan ulang). */
     const openFromGrid = async (mid) => {
       await closeViewer();
-      const g = gridItems(peer.peerId).find(x => x.getAttribute('data-mid') === mid);
+      const g = await findGridItem(mid);
       if (!g) return false;
       try { g.scrollIntoView({ block: 'nearest' }); } catch {}
       realClick(g.querySelector('img') || g);
       return !!await waitFor(() => viewerShown() && activeView(), 10000);
+    };
+
+    /*
+     * Cari item grid ber-mid ini, MENGGULUNG grid kalau perlu.
+     *
+     * Grid hanya menyimpan item di sekitar posisi gulungan; dengan ratusan
+     * media, item ke-35 sudah dibuang dari DOM setelah grid digulung balik
+     * ke atas. Dulu itu berarti "gagal menyelaraskan ulang" -> berhenti total.
+     */
+    const findGridItem = async (mid) => {
+      const find = () => gridItems(peer.peerId).find(x => x.getAttribute('data-mid') === mid);
+      let g = find();
+      if (g) return g;
+      const any = gridItems(peer.peerId)[0];
+      const sc = any ? scrollBox(any) : null;
+      if (!sc) return null;
+      sc.scrollTop = 0;
+      sc.dispatchEvent(new Event('scroll', { bubbles: true }));
+      await pause(1);
+      for (let k = 0; k < 600 && !(g = find()); k++) {
+        guard();
+        const before = sc.scrollTop;
+        sc.scrollTop = before + Math.round((sc.clientHeight || 400) * 0.8);
+        sc.dispatchEvent(new Event('scroll', { bubbles: true }));
+        await pause(0.8);
+        if (sc.scrollTop === before) break;          // sudah mentok bawah
+      }
+      return g || find() || null;
+    };
+
+    /*
+     * Jenis item yang sedang tampil, SETELAH viewer selesai memasangnya.
+     *
+     * Video menampilkan gambar poster dulu dan baru memasang <video> sesaat
+     * kemudian. Memeriksa terlalu cepat membuat setiap video terbaca "gambar"
+     * — itulah "urutan viewer tidak cocok" palsu yang memicu penyelarasan
+     * ulang dan menghentikan unduhan di tengah jalan.
+     */
+    const settledIsVideo = async (expectVideo) => {
+      await waitFor(() => activeView()?.querySelector('video, img'), 3000);
+      if (expectVideo) await waitFor(() => viewerIsVideo(), 6000);
+      else await pause(0.5);
+      return viewerIsVideo();
     };
 
     /*
@@ -1132,13 +1175,20 @@ async function runOneChat(settings, { offset = null, title = null } = {}) {
       const first = gridItems(peer.peerId)[0];
       const sc = first ? scrollBox(first) : null;
       if (sc) {
+        /*
+         * Digulung BERTAHAP, bukan langsung melompat ke paling bawah: kalau
+         * grid hanya menyimpan item di sekitar posisi gulungan, lompatan
+         * membuat item di tengah tidak pernah sempat terbaca. Di dasar grid
+         * ditunggu lebih lama supaya lanjutan sempat dimuat.
+         */
         let idle = 0;
         while (idle < Math.max(3, scrollRetries)) {
           guard();
           const n = order.length, top = sc.scrollTop;
-          sc.scrollTop = sc.scrollHeight;
+          const atBottom = top + (sc.clientHeight || 0) >= sc.scrollHeight - 5;
+          sc.scrollTop = atBottom ? sc.scrollHeight : top + Math.round((sc.clientHeight || 400) * 0.9);
           sc.dispatchEvent(new Event('scroll', { bubbles: true }));
-          await pause(1.6);
+          await pause(atBottom ? 1.6 : 0.6);
           take();
           idle = (order.length !== n || sc.scrollTop !== top) ? 0 : idle + 1;
           report('tgstep', { index: order.length, total: order.length, title: `${title || peer.title} — mendata media`, phase: 'buka' });
@@ -1238,10 +1288,23 @@ async function runOneChat(settings, { offset = null, title = null } = {}) {
       i++;
 
       // ---- cocokkan: jenis item di viewer harus sama dengan item ke-i di daftar
-      await waitFor(() => activeView()?.querySelector('video, img'), 3000);
-      if (viewerIsVideo() !== list[i].isVideo) {
+      const nowVideo = await settledIsVideo(list[i].isVideo);
+      if (nowVideo && !list[i].isVideo) {
+        // Grid bilang gambar, viewer memutar video: GIF/animasi. Bukan
+        // urutan yang meleset — unduh sebagai video.
+        list[i].isVideo = true;
+      } else if (!nowVideo && list[i].isVideo) {
         log('warn', `Urutan viewer tidak cocok dengan grid di item ${list[i].mid} — diselaraskan ulang.`);
-        if (!await openFromGrid(list[i].mid)) { log('err', 'Gagal menyelaraskan ulang viewer.'); break; }
+        let ok = await openFromGrid(list[i].mid);
+        // Item ini tidak bisa dibuka lagi: lanjut dari item sesudahnya,
+        // jangan hentikan seluruh chat.
+        while (!ok && i + 1 < list.length) {
+          log('warn', `${list[i].mid}: tidak ketemu di grid, dilewati.`);
+          skipped++; stats();
+          i++;
+          ok = await openFromGrid(list[i].mid);
+        }
+        if (!ok) { log('err', 'Gagal menyelaraskan ulang viewer.'); break; }
       }
     }
 

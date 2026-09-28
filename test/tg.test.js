@@ -1229,6 +1229,104 @@ const check = (name, cond, extra = '') => {
     check('  tetap satu modal', opened.length === 1, opened.join(','));
   }
 
+  /*
+   * Grid + viewer tiruan yang lebih mirip Telegram, untuk tes 43–44:
+   *  - `virtual`: grid hanya menyimpan WINDOW item di sekitar gulungan
+   *    (satu item per baris, 100px), item lain dibuang dari DOM;
+   *  - video menampilkan POSTER (<img>) dulu, <video>-nya baru dipasang
+   *    `videoDelay` ms kemudian;
+   *  - `jumpAt`: sekali, panah kanan dari posisi itu melompat dua item.
+   */
+  function bootGrid({ n, isVid, virtual = false, videoDelay = 0, jumpAt = -1 }) {
+    const ctx = boot({ bodyHtml: albumBubbleFor('-66', ['1']) });
+    const d = ctx.w.document;
+    d.body.insertAdjacentHTML('afterbegin',
+      '<div class="chat-info-container"><div class="chat-info"><div class="person"><div class="user-title">' +
+      '<span class="peer-title" data-peer-id="-66">Grup</span></div></div></div></div>');
+    const ALL = Array.from({ length: n }, (_, k) => String(5000 - k));
+    const cell = (m, k) => `<div class="grid-item search-super-item" data-mid="${m}" data-peer-id="-66">
+      ${isVid(k) ? '<span class="video-time">0:10</span>' : ''}
+      <img class="media-photo" src="blob:https://web.telegram.org/g-${m}"></div>`;
+    const WIN = 5;
+    let top = 0, pos = -1, jumped = false;
+    const opened = [];
+    const drawGrid = () => {
+      const start = virtual ? Math.floor(top / 100) : 0;
+      const end = virtual ? start + WIN : n;
+      d.querySelector('.search-super .grid').innerHTML =
+        ALL.slice(start, end).map((m) => cell(m, ALL.indexOf(m))).join('');
+    };
+    const render = () => {
+      const asp = d.querySelector('.media-viewer-whole .media-viewer-aspecter');
+      const m = ALL[pos];
+      if (isVid(pos)) {
+        asp.innerHTML = `<img class="thumbnail" src="blob:https://web.telegram.org/poster-${m}">`;
+        const at = pos;
+        const mount = () => { if (pos === at) asp.innerHTML = `<video src="stream/%7B%22id%22%3A${m}%7D"></video>`; };
+        videoDelay ? setTimeout(mount, videoDelay) : mount();
+      } else {
+        asp.innerHTML = `<img class="thumbnail" src="blob:https://web.telegram.org/v-${m}">`;
+      }
+    };
+    d.addEventListener('click', (e) => {
+      if (e.target.closest('.chat-info') && !d.querySelector('.search-super')) {
+        d.body.insertAdjacentHTML('beforeend',
+          '<div class="search-super" style="overflow-y:auto"><div class="search-super-content-media"><div class="grid"></div></div></div>');
+        const sc = d.querySelector('.search-super');
+        Object.defineProperty(sc, 'scrollHeight', { value: n * 100, configurable: true });
+        Object.defineProperty(sc, 'clientHeight', { value: 300, configurable: true });
+        Object.defineProperty(sc, 'scrollTop', {
+          configurable: true, get: () => top,
+          set: (v) => { top = Math.max(0, Math.min(v, n * 100 - 300)); drawGrid(); }
+        });
+        drawGrid();
+      }
+      const g = e.target.closest('.search-super-item');
+      if (g && !d.querySelector('.media-viewer-whole')) {
+        opened.push(g.getAttribute('data-mid'));
+        pos = ALL.indexOf(g.getAttribute('data-mid'));
+        d.body.insertAdjacentHTML('beforeend',
+          '<div class="media-viewer-whole"><div class="media-viewer-mover active"><div class="media-viewer-aspecter"></div></div></div>');
+        render();
+      }
+    });
+    d.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') d.querySelector('.media-viewer-whole')?.remove();
+      if (e.key !== 'ArrowRight' || !d.querySelector('.media-viewer-whole') || pos >= n - 1) return;
+      if (pos === jumpAt && !jumped) { jumped = true; pos = Math.min(pos + 2, n - 1); } else pos++;
+      render();
+    });
+    return { ...ctx, ALL, opened };
+  }
+  const saved = (ctx) => ctx.calls.clicked.filter(c => c.via === 'extension').map(c => c.name.replace(/\.(jpg|mp4)$/, ''));
+
+  // 43. Video memasang <video> belakangan (poster dulu). Dulu terbaca
+  //     "gambar" -> "urutan tidak cocok" palsu -> penyelarasan ulang -> berhenti.
+  {
+    const ctx = bootGrid({ n: 8, isVid: k => k % 2 === 1, videoDelay: 400 });
+    await ctx.send({ cmd: 'tg.run', settings: { stepDelay: 1, scrollRetries: 2, downloadTimeout: 3000, tgIncludeVideo: true } });
+    check('video yang dipasang belakangan tidak memicu "tidak cocok"',
+      !ctx.calls.logs.some(l => /tidak cocok/.test(l)), ctx.calls.logs.filter(l => /cocok|Gagal/.test(l)).join(' | '));
+    check('  semua 8 terunduh dalam satu modal',
+      saved(ctx).join(',') === ctx.ALL.join(',') && ctx.opened.length === 1,
+      `${saved(ctx).join(',')} / buka ${ctx.opened.length}x`);
+  }
+
+  // 44. Grid virtual + viewer sekali melompat: penyelarasan ulang harus
+  //     MENGGULUNG grid untuk menemukan itemnya, lalu lanjut sampai habis.
+  {
+    const isVid = (k) => k === 10;
+    const ctx = bootGrid({ n: 15, isVid, virtual: true, jumpAt: 9 });
+    await ctx.send({ cmd: 'tg.run', settings: { stepDelay: 1, scrollRetries: 2, downloadTimeout: 3000, tgIncludeVideo: true } });
+    check('grid virtual: pendataan bertahap membaca semua 15 item',
+      ctx.calls.logs.some(l => /15 media di grid/.test(l)), ctx.calls.logs.filter(l => /media di grid/.test(l)).join(' | '));
+    check('  lompatan viewer diselaraskan ulang lewat grid yang digulung',
+      ctx.opened.length === 2 && ctx.opened[1] === ctx.ALL[10], ctx.opened.join(','));
+    check('  tidak berhenti di tengah: semua terunduh, masing-masing sekali',
+      saved(ctx).slice().sort().join(',') === ctx.ALL.slice().sort().join(',') && saved(ctx).length === 15,
+      `${saved(ctx).length}: ${saved(ctx).join(',')} :: ${ctx.calls.logs.filter(l => /cocok|Gagal|dilewati/.test(l)).join(' | ')}`);
+  }
+
   console.log('\n' + pass + ' lulus, ' + fail + ' gagal');
   process.exit(fail ? 1 : 0);
 })();

@@ -11,7 +11,7 @@
  */
 
 (() => {
-const TG_VERSION = '1.15.0';
+const TG_VERSION = '1.16.0';
 
 if (typeof window.__WAN_TG_TEARDOWN__ === 'function') {
   try { window.__WAN_TG_TEARDOWN__(); } catch {}
@@ -743,13 +743,26 @@ const viewerShown = () => document.querySelector('.media-viewer-whole');
  * kalau tidak datang, yang ada yang dipakai.
  * Video: <video> di pemutar viewer, src-nya "stream/…" (diambil fetchVideo).
  */
+/**
+ * Wadah item yang SEDANG tampil di viewer.
+ *
+ * Viewer Telegram menyimpan lebih dari satu tampilan (item sebelum/sesudah,
+ * pemutar video yang tertinggal). Mencari <video> di seluruh viewer membuat
+ * setiap GAMBAR sesudah video pertama terbaca "video" — dan gambarnya tidak
+ * pernah terunduh. Semua pemeriksaan harus dibatasi ke wadah ini.
+ */
+function activeMover() {
+  return document.querySelector('.media-viewer-mover.active')
+    || [...document.querySelectorAll('.media-viewer-aspecter')].pop()?.parentElement
+    || null;
+}
+
 async function viewerMedia(isVideo, timeout = 15000) {
-  const aspecter = () => document.querySelector('.media-viewer-mover.active .media-viewer-aspecter')
-    || [...document.querySelectorAll('.media-viewer-aspecter')].pop();
+  const aspecter = () => activeMover()?.querySelector('.media-viewer-aspecter') || activeMover();
 
   if (isVideo) {
     return waitFor(() => {
-      const v = aspecter()?.querySelector('video') || viewerShown()?.querySelector('video');
+      const v = activeMover()?.querySelector('video');
       const src = v?.currentSrc || v?.getAttribute('src');
       return src ? { src } : null;
     }, timeout);
@@ -1095,8 +1108,8 @@ async function runOneChat(settings, { offset = null, title = null } = {}) {
     /** Sumber media yang sedang tampil — penanda item mana yang terbuka. */
     const viewSrcs = () => [...(activeView()?.querySelectorAll('img, video') || [])]
       .map(m => m.currentSrc || m.getAttribute('src') || '').filter(Boolean);
-    const viewerIsVideo = () => !!(activeView()?.querySelector('video') ||
-                                   document.querySelector('.media-viewer-whole .ckin__player video'));
+    // Hanya item aktif — lihat activeMover().
+    const viewerIsVideo = () => !!activeMover()?.querySelector('video');
 
     /** Buka item ber-mid ini dari grid (pembuka pertama, atau penyelarasan ulang). */
     const openFromGrid = async (mid) => {
@@ -1168,7 +1181,8 @@ async function runOneChat(settings, { offset = null, title = null } = {}) {
           const m = g.getAttribute('data-mid');
           if (seen.has(m)) continue;
           seen.add(m);
-          order.push({ mid: m, isVideo: !!g.querySelector('.video-time') });
+          const v = !!g.querySelector('.video-time');
+          order.push({ mid: m, isVideo: v, gridVideo: v });
         }
       };
       take();
@@ -1226,10 +1240,16 @@ async function runOneChat(settings, { offset = null, title = null } = {}) {
         skipped++;
       } else {
         try {
-          const media = await viewerMedia(isVideo);
-          if (!media) throw new Error(isVideo ? 'video tidak muncul di viewer' : 'gambar tidak muncul di viewer');
+          let asVideo = isVideo;
+          let media = await viewerMedia(asVideo, list[i].gridVideo ? 15000 : 4000);
+          if (!media && asVideo && !list[i].gridVideo) {
+            // Dianggap GIF tapi ternyata tidak ada videonya: itu gambar biasa.
+            asVideo = false;
+            media = await viewerMedia(false);
+          }
+          if (!media) throw new Error(asVideo ? 'video tidak muncul di viewer' : 'gambar tidak muncul di viewer');
           let blob, ext;
-          if (isVideo) ({ blob, ext } = await fetchVideo(media.src));
+          if (asVideo) ({ blob, ext } = await fetchVideo(media.src));
           else ({ blob, ext } = await normalizeImage(await (await fetch(media.src)).blob()));
 
           const armId = await startDownload({ bucket, key: `${mid}.${ext}`, url: media.src, blob });

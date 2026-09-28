@@ -1237,7 +1237,7 @@ const check = (name, cond, extra = '') => {
    *    `videoDelay` ms kemudian;
    *  - `jumpAt`: sekali, panah kanan dari posisi itu melompat dua item.
    */
-  function bootGrid({ n, isVid, virtual = false, videoDelay = 0, jumpAt = -1 }) {
+  function bootGrid({ n, isVid, virtual = false, videoDelay = 0, jumpAt = -1, staleVideo = false }) {
     const ctx = boot({ bodyHtml: albumBubbleFor('-66', ['1']) });
     const d = ctx.w.document;
     d.body.insertAdjacentHTML('afterbegin',
@@ -1285,8 +1285,12 @@ const check = (name, cond, extra = '') => {
       if (g && !d.querySelector('.media-viewer-whole')) {
         opened.push(g.getAttribute('data-mid'));
         pos = ALL.indexOf(g.getAttribute('data-mid'));
+        // staleVideo: pemutar video yang TERTINGGAL di luar item aktif, seperti
+        // yang dilakukan viewer Telegram setelah satu video pernah diputar.
         d.body.insertAdjacentHTML('beforeend',
-          '<div class="media-viewer-whole"><div class="media-viewer-mover active"><div class="media-viewer-aspecter"></div></div></div>');
+          '<div class="media-viewer-whole"><div class="media-viewer-mover active"><div class="media-viewer-aspecter"></div></div>' +
+          (staleVideo ? '<div class="media-viewer-mover"><div class="ckin__player"><video src="stream/lama"></video></div></div>' : '') +
+          '</div>');
         render();
       }
     });
@@ -1325,6 +1329,21 @@ const check = (name, cond, extra = '') => {
     check('  tidak berhenti di tengah: semua terunduh, masing-masing sekali',
       saved(ctx).slice().sort().join(',') === ctx.ALL.slice().sort().join(',') && saved(ctx).length === 15,
       `${saved(ctx).length}: ${saved(ctx).join(',')} :: ${ctx.calls.logs.filter(l => /cocok|Gagal|dilewati/.test(l)).join(' | ')}`);
+  }
+
+  // 45. Keluhan pengguna: sejak revisi, GAMBAR tidak pernah terunduh lagi.
+  //     Pemutar video yang tertinggal di viewer membuat setiap gambar terbaca
+  //     "video" (lalu dianggap GIF) -> "video tidak muncul di viewer".
+  {
+    const ctx = bootGrid({ n: 6, isVid: k => k === 1 || k === 4, staleVideo: true });
+    await ctx.send({ cmd: 'tg.run', settings: { stepDelay: 1, scrollRetries: 2, downloadTimeout: 3000, tgIncludeVideo: true } });
+    const names = ctx.calls.clicked.filter(c => c.via === 'extension').map(c => c.name);
+    const want = ctx.ALL.map((m, k) => `${m}.${k === 1 || k === 4 ? 'mp4' : 'jpg'}`);
+    check('gambar tetap terunduh sebagai .jpg walau ada pemutar video tertinggal',
+      names.join(',') === want.join(','),
+      `${names.join(',')} :: ${ctx.calls.logs.filter(l => /tidak muncul|cocok/.test(l)).join(' | ')}`);
+    check('  tidak ada "video tidak muncul"', !ctx.calls.logs.some(l => /video tidak muncul/.test(l)),
+      ctx.calls.logs.filter(l => /tidak muncul/.test(l)).join(' | '));
   }
 
   console.log('\n' + pass + ' lulus, ' + fail + ' gagal');

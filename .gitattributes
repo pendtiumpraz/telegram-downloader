@@ -1,0 +1,12 @@
+# Normalkan teks di repo sebagai LF.
+* text=auto eol=lf
+
+# Batch Windows WAJIB CRLF — dengan LF, cmd.exe salah membaca label/goto
+# dan install.bat gagal di komputer lain.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Biner
+*.png binary
+*.jpg binary
+*.ico binary

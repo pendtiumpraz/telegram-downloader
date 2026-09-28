@@ -1,0 +1,12 @@
+{
+  "name": "wan-telegram-downloader",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Test harness untuk content script WAN Telegram Downloader.",
+  "scripts": {
+    "test": "node test/tg.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^27.0.0"
+  }
+}

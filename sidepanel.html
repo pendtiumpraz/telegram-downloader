@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<title>WAN Telegram Downloader</title>
+<link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+
+<div id="bootErr" class="bootErr" hidden></div>
+
+<header class="hdr">
+  <div class="brand">
+    <span class="dot" id="dot"></span>
+    <strong>WAN Telegram</strong>
+  </div>
+</header>
+
+<div class="status" id="status">
+  <div class="srow"><span class="k">Simpan ke</span><span class="v" id="stPath">—</span></div>
+  <div class="srow"><span class="k">Native host</span><span class="v" id="stNative">—</span></div>
+</div>
+
+<nav class="tabs">
+  <button class="tab active" data-tab="tg">Telegram</button>
+  <button class="tab" data-tab="set">Setelan</button>
+</nav>
+
+<!-- ============================================================== TG -->
+<section class="pane active" id="pane-tg">
+
+  <label class="lbl">Channel / grup Telegram</label>
+  <p class="hint">Tempel link channel, atau buka sendiri di Telegram Web lalu langsung tekan Mulai.
+     Harus sudah login di <code>web.telegram.org</code>.</p>
+  <input class="inp" id="tgUrl" placeholder="https://web.telegram.org/k/#-1234567890" autocomplete="off">
+  <div class="btnrow">
+    <button class="btn ghost" id="tgOpen">Buka di tab</button>
+    <button class="btn ghost" id="tgProbe">↻ Cek halaman</button>
+    <button class="btn ghost sm" id="tgDiag">🔬 Diagnosa</button>
+  </div>
+  <div class="idxbox" id="tgBox">Belum dicek.</div>
+
+  <hr class="sep">
+
+  <label class="lbl">Pilih chat <span class="muted" id="tgPickCount"></span></label>
+  <p class="hint">Tiap chat disimpan ke foldernya sendiri, dinamai sesuai judul chat.
+     Daftarnya perlu di-scroll dulu oleh Telegram, jadi memuatnya butuh beberapa detik.</p>
+  <div class="btnrow">
+    <button class="btn ghost" id="tgLoadChats">📋 Muat daftar chat</button>
+    <button class="btn ghost sm" id="tgPickAll">Pilih semua</button>
+    <button class="btn ghost sm" id="tgPickNone">Kosongkan</button>
+  </div>
+  <label class="chk">
+    <input type="checkbox" id="tgScanTopics">
+    <span>Cari sub-topik di grup forum<br>
+      <span class="muted">Tiap chat dibuka sebentar untuk diperiksa — beberapa detik per chat.
+        Matikan kalau kamu tidak punya grup ber-topik.</span></span>
+  </label>
+  <input class="inp" id="tgChatFilter" placeholder="Filter nama chat…" autocomplete="off" hidden>
+  <div class="chatpick" id="tgChatList" hidden></div>
+
+  <label class="chk">
+    <input type="checkbox" id="tgIncludeVideo">
+    <span>Ikut unduh video <span class="muted">(.mp4)</span><br>
+      <span class="muted">Default hanya gambar, disimpan sebagai .jpg atau .png.</span></span>
+  </label>
+
+  <div class="grid2">
+    <div>
+      <label class="lbl sm">Batas media <span class="muted">(0=∞)</span></label>
+      <input class="inp" id="tgMaxItems" type="number" min="0" value="0">
+    </div>
+    <div>
+      <label class="lbl sm">Folder induk</label>
+      <input class="inp" id="tgRootDir" placeholder="otomatis: D:/telegram">
+    </div>
+  </div>
+  <p class="hint">Kosongkan folder induk untuk memilih otomatis: <code>D:/telegram</code> kalau bisa dibuat,
+     kalau tidak <code>E:/telegram</code>. Subfoldernya memakai judul channel, lalu dipisah
+     <code>image/</code> dan <code>video/</code>.
+     Urutannya dari pesan <b>paling bawah ke paling atas</b>, dan media yang sudah pernah
+     tersimpan dilewati.</p>
+
+  <div class="btnrow">
+    <button class="btn primary" id="tgStart">▶ Unduh chat terpilih</button>
+    <button class="btn" id="tgSkipOne" disabled>⏭ Lewati</button>
+    <button class="btn stop" id="tgStop" disabled>■ Stop</button>
+  </div>
+  <p class="hint">Tanpa ada yang dicentang, yang diunduh adalah chat yang sedang terbuka.
+     <b>Lewati</b> berpindah ke chat / topik berikutnya tanpa menghentikan antrean.</p>
+
+  <div class="nowbox" id="tgNow">—</div>
+
+  <div class="stats">
+    <div class="stat"><b id="tgProc">0</b><span>proses</span></div>
+    <div class="stat ok"><b id="tgSaved">0</b><span>simpan</span></div>
+    <div class="stat dup"><b id="tgSkip">0</b><span>skip</span></div>
+    <div class="stat err"><b id="tgFail">0</b><span>gagal</span></div>
+  </div>
+
+  <div class="loghead">
+    <span>Log</span>
+    <button class="link" id="tgClearLog">bersihkan</button>
+  </div>
+  <div class="log" id="tgLog"></div>
+
+  <div class="warnbox" id="tgNote">
+    Unduhan dilakukan oleh extension, jadi Chrome <b>tidak</b> meminta izin apa pun.
+    Hanya berkas yang terlalu besar (video panjang, &gt;24&nbsp;MB) yang jatuh ke unduhan
+    halaman — di situ saja Chrome bisa bertanya sekali.
+  </div>
+</section>
+
+<!-- ============================================================= SET -->
+<section class="pane" id="pane-set">
+
+  <label class="lbl">Native host</label>
+  <p class="hint">Memindahkan hasil unduhan ke <code>D:/telegram</code> (atau folder induk pilihanmu).
+     Pasang sekali lewat <code>native-host/install.bat</code> — extension ini punya ID sendiri,
+     jadi native host milik WAN Studio tidak berlaku di sini.</p>
+  <div class="nativebox" id="nativeBox">—</div>
+  <button class="btn ghost full" id="btnProbe">Cek ulang native host</button>
+
+  <hr class="sep">
+
+  <label class="lbl">Riwayat unduhan (anti-duplikat)</label>
+  <div class="idxbox" id="idxBox"></div>
+  <button class="btn ghost danger full" id="btnClearIdxAll">Reset semua riwayat</button>
+  <p class="hint">Reset hanya menghapus catatan extension. Berkas di folder tetap dianggap
+     "sudah ada" selama masih di sana.</p>
+
+  <hr class="sep">
+
+  <div class="grid2">
+    <div>
+      <label class="lbl sm">Jeda antar aksi (ms)</label>
+      <input class="inp" id="stepDelay" type="number" min="100" step="100" value="500">
+    </div>
+    <div>
+      <label class="lbl sm">Timeout unduh (ms)</label>
+      <input class="inp" id="downloadTimeout" type="number" min="5000" step="1000" value="240000">
+    </div>
+  </div>
+  <label class="lbl sm">Percobaan scroll muat-lanjutan</label>
+  <input class="inp" id="scrollRetries" type="number" min="1" max="20" value="4">
+</section>
+
+<script src="bootcheck.js"></script>
+<script type="module" src="sidepanel.js"></script>
+</body>
+</html>

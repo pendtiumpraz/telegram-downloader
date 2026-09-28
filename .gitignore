@@ -1,0 +1,9 @@
+# Dibuat ulang oleh native-host/install.bat di tiap komputer (berisi Extension ID lokal).
+native-host/com.wan.tele.dlhost.json
+native-host/runtime.txt
+native-host/python_path.txt
+
+node_modules/
+*.log
+.DS_Store
+Thumbs.db

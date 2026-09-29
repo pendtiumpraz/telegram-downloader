@@ -1237,7 +1237,7 @@ const check = (name, cond, extra = '') => {
    *    `videoDelay` ms kemudian;
    *  - `jumpAt`: sekali, panah kanan dari posisi itu melompat dua item.
    */
-  function bootGrid({ n, isVid, virtual = false, videoDelay = 0, jumpAt = -1, staleVideo = false }) {
+  function bootGrid({ n, isVid, virtual = false, videoDelay = 0, jumpAt = -1, staleVideo = false, stuckAt = -1 }) {
     const ctx = boot({ bodyHtml: albumBubbleFor('-66', ['1']) });
     const d = ctx.w.document;
     d.body.insertAdjacentHTML('afterbegin',
@@ -1297,6 +1297,9 @@ const check = (name, cond, extra = '') => {
     d.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') d.querySelector('.media-viewer-whole')?.remove();
       if (e.key !== 'ArrowRight' || !d.querySelector('.media-viewer-whole') || pos >= n - 1) return;
+      // stuckAt: viewer berhenti merespons panah kanan di posisi ini (daftar
+      // internalnya belum memuat lanjutan), padahal grid masih panjang.
+      if (pos === stuckAt) return;
       if (pos === jumpAt && !jumped) { jumped = true; pos = Math.min(pos + 2, n - 1); } else pos++;
       render();
     });
@@ -1344,6 +1347,22 @@ const check = (name, cond, extra = '') => {
       `${names.join(',')} :: ${ctx.calls.logs.filter(l => /tidak muncul|cocok/.test(l)).join(' | ')}`);
     check('  tidak ada "video tidak muncul"', !ctx.calls.logs.some(l => /video tidak muncul/.test(l)),
       ctx.calls.logs.filter(l => /tidak muncul/.test(l)).join(' | '));
+  }
+
+  // 46. Keluhan: grid 3.900 media, tapi "panah kanan tidak lagi berpindah —
+  //     media habis" di ~120. Macetnya viewer bukan akhir daftar: item
+  //     berikutnya dibuka dari grid, lalu panah kanan dilanjutkan.
+  {
+    const ctx = bootGrid({ n: 12, isVid: () => false, virtual: true, stuckAt: 5 });
+    await ctx.send({ cmd: 'tg.run', settings: { stepDelay: 1, scrollRetries: 2, downloadTimeout: 3000 } });
+    const names = ctx.calls.clicked.filter(c => c.via === 'extension').map(c => c.name.replace(/\.jpg$/, ''));
+    check('viewer macet di tengah: tetap lanjut sampai semua 12',
+      names.join(',') === ctx.ALL.join(','),
+      `${names.length}: ${names.join(',')} :: ${ctx.calls.logs.filter(l => /berpindah|habis|grid/.test(l)).join(' | ')}`);
+    check('  pulih dengan membuka item berikutnya dari grid (sekali)',
+      ctx.opened.length === 2 && ctx.opened[1] === ctx.ALL[6], ctx.opened.join(','));
+    check('  tidak menyebut "media habis" sebelum waktunya',
+      !ctx.calls.logs.some(l => /media habis/.test(l)), ctx.calls.logs.filter(l => /habis/.test(l)).join(' | '));
   }
 
   console.log('\n' + pass + ' lulus, ' + fail + ' gagal');

@@ -11,7 +11,7 @@
  */
 
 (() => {
-const TG_VERSION = '1.16.0';
+const TG_VERSION = '1.17.0';
 
 if (typeof window.__WAN_TG_TEARDOWN__ === 'function') {
   try { window.__WAN_TG_TEARDOWN__(); } catch {}
@@ -1135,18 +1135,29 @@ async function runOneChat(settings, { offset = null, title = null } = {}) {
       const any = gridItems(peer.peerId)[0];
       const sc = any ? scrollBox(any) : null;
       if (!sc) return null;
+
+      /*
+       * Cari MAJU dari posisi gulungan sekarang dulu: item yang dicari
+       * hampir selalu item berikutnya, yang ada tepat di bawah posisi
+       * terakhir. Baru kalau mentok di bawah, ulangi dari atas. Selalu mulai
+       * dari atas berarti ratusan gulungan per item pada grid 3.900 media.
+       */
+      const sweep = async (maxSteps) => {
+        for (let k = 0; k < maxSteps && !(g = find()); k++) {
+          guard();
+          const before = sc.scrollTop;
+          sc.scrollTop = before + Math.round((sc.clientHeight || 400) * 0.8);
+          sc.dispatchEvent(new Event('scroll', { bubbles: true }));
+          await pause(0.8);
+          if (sc.scrollTop === before) break;          // sudah mentok bawah
+        }
+        return g || find() || null;
+      };
+      if (await sweep(2000)) return g || find();
       sc.scrollTop = 0;
       sc.dispatchEvent(new Event('scroll', { bubbles: true }));
       await pause(1);
-      for (let k = 0; k < 600 && !(g = find()); k++) {
-        guard();
-        const before = sc.scrollTop;
-        sc.scrollTop = before + Math.round((sc.clientHeight || 400) * 0.8);
-        sc.dispatchEvent(new Event('scroll', { bubbles: true }));
-        await pause(0.8);
-        if (sc.scrollTop === before) break;          // sudah mentok bawah
-      }
-      return g || find() || null;
+      return (await sweep(2000)) || null;
     };
 
     /*
@@ -1303,7 +1314,27 @@ async function runOneChat(settings, { offset = null, title = null } = {}) {
         moved = await step('ArrowLeft');
         if (moved) key = 'ArrowLeft';
       }
-      if (!moved) { log('ok', 'Panah kanan tidak lagi berpindah — media habis.'); break; }
+      if (!moved) {
+        /*
+         * Panah kanan tidak berpindah padahal daftar belum habis (3.900 media,
+         * macet di ~120): viewer sedang memuat lanjutan daftarnya sendiri,
+         * atau item berikutnya lama sekali tampil. Itu BUKAN akhir — buka
+         * item berikutnya langsung dari grid, lalu lanjut panah kanan.
+         */
+        log('warn', `Panah kanan tidak berpindah di item ${i + 1}/${list.length} — ` +
+                    `membuka item berikutnya langsung dari grid.`);
+        i++;
+        let ok = await openFromGrid(list[i].mid);
+        while (!ok && i + 1 < list.length) {
+          log('warn', `${list[i].mid}: tidak ketemu di grid, dilewati.`);
+          skipped++; stats();
+          i++;
+          ok = await openFromGrid(list[i].mid);
+        }
+        if (!ok) { log('err', 'Tidak bisa membuka item berikutnya dari grid — berhenti.'); break; }
+        await settledIsVideo(list[i].isVideo);
+        continue;
+      }
 
       i++;
 

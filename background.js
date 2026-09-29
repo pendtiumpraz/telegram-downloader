@@ -94,12 +94,12 @@ const HANDLERS = {
    * jadi content script bisa membacanya). URL itu dilepas otomatis 10 menit
    * kemudian.
    */
-  async tgMainFetch({ url }, sender) {
+  async tgMainFetch({ url, maxBytes = 0 }, sender) {
     const tabId = sender?.tab?.id;
     if (tabId == null) return { ok: false, error: 'tab pengirim tidak diketahui' };
     const [res] = await chrome.scripting.executeScript({
-      target: { tabId }, world: 'MAIN', args: [url],
-      func: async (url) => {
+      target: { tabId }, world: 'MAIN', args: [url, maxBytes || 0],
+      func: async (url, maxBytes) => {
         try {
           const abs = new URL(url, location.href).href;
           const parts = [];
@@ -114,6 +114,9 @@ const HANDLERS = {
             const b = await r.blob();
             parts.push(b);
             const m = (r.headers.get('Content-Range') || '').match(/bytes\s+(\d+)-(\d+)\/(\d+|\*)/i);
+            // Batas ukuran: berhenti begitu ketahuan terlalu besar.
+            const total = m && m[3] !== '*' ? Number(m[3]) : parts.reduce((n, p) => n + p.size, 0);
+            if (maxBytes && total > maxBytes) return { ok: false, tooBig: true, size: total };
             if (r.status !== 206 || !m || !b.size) break;
             offset = Number(m[2]) + 1;
             if (m[3] !== '*' && offset >= Number(m[3])) break;

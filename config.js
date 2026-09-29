@@ -11,5 +11,7 @@ export const DEFAULTS = {
   /** Periksa tiap chat untuk mencari sub-topik forum saat memuat daftar. */
   tgScanTopics: false,
   /** Berhenti setelah N media. 0 = tanpa batas. */
-  tgMaxItems: 0
+  tgMaxItems: 0,
+  /** Lewati berkas yang lebih besar dari ini (MB). 0 = tanpa batas. */
+  tgMaxSizeMB: 300
 };

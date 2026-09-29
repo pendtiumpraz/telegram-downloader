@@ -1237,7 +1237,7 @@ const check = (name, cond, extra = '') => {
    *    `videoDelay` ms kemudian;
    *  - `jumpAt`: sekali, panah kanan dari posisi itu melompat dua item.
    */
-  function bootGrid({ n, isVid, virtual = false, videoDelay = 0, jumpAt = -1, staleVideo = false, stuckAt = -1 }) {
+  function bootGrid({ n, isVid, virtual = false, videoDelay = 0, jumpAt = -1, staleVideo = false, stuckAt = -1, sizeOf = null }) {
     const ctx = boot({ bodyHtml: albumBubbleFor('-66', ['1']) });
     const d = ctx.w.document;
     d.body.insertAdjacentHTML('afterbegin',
@@ -1262,7 +1262,9 @@ const check = (name, cond, extra = '') => {
       if (isVid(pos)) {
         asp.innerHTML = `<img class="thumbnail" src="blob:https://web.telegram.org/poster-${m}">`;
         const at = pos;
-        const mount = () => { if (pos === at) asp.innerHTML = `<video src="stream/%7B%22id%22%3A${m}%7D"></video>`; };
+        // URL stream/ Telegram memuat JSON lokasi berkas, termasuk "size".
+        const size = sizeOf ? `%2C%22size%22%3A${sizeOf(at)}` : '';
+        const mount = () => { if (pos === at) asp.innerHTML = `<video src="stream/%7B%22id%22%3A${m}${size}%7D"></video>`; };
         videoDelay ? setTimeout(mount, videoDelay) : mount();
       } else {
         asp.innerHTML = `<img class="thumbnail" src="blob:https://web.telegram.org/v-${m}">`;
@@ -1363,6 +1365,32 @@ const check = (name, cond, extra = '') => {
       ctx.opened.length === 2 && ctx.opened[1] === ctx.ALL[6], ctx.opened.join(','));
     check('  tidak menyebut "media habis" sebelum waktunya',
       !ctx.calls.logs.some(l => /media habis/.test(l)), ctx.calls.logs.filter(l => /habis/.test(l)).join(' | '));
+  }
+
+  // 47. Batas ukuran (setelan, default 300 MB): video 400 MB dilewati
+  //     SEBELUM diunduh — ukurannya dibaca dari URL stream/.
+  {
+    const MB = 1048576;
+    const ctx = bootGrid({ n: 4, isVid: k => k === 1 || k === 2, sizeOf: k => (k === 1 ? 400 : 5) * MB });
+    await ctx.send({ cmd: 'tg.run', settings: { stepDelay: 1, scrollRetries: 2, downloadTimeout: 3000, tgIncludeVideo: true, tgMaxSizeMB: 300 } });
+    const names = ctx.calls.clicked.filter(c => c.via === 'extension').map(c => c.name);
+    const big = ctx.ALL[1];
+    check('video di atas batas tidak diunduh, sisanya tetap',
+      names.join(',') === [`${ctx.ALL[0]}.jpg`, `${ctx.ALL[2]}.mp4`, `${ctx.ALL[3]}.jpg`].join(','), names.join(','));
+    check('  bahkan tidak diambil sama sekali (hemat kuota)',
+      !ctx.calls.fetched.some(u => u.includes(`%3A${big}`)), ctx.calls.fetched.filter(u => /stream/.test(u)).join(' | '));
+    check('  alasannya dicatat, dihitung skip bukan gagal',
+      ctx.calls.logs.some(l => new RegExp(`${big}: video 400 MB melebihi batas 300 MB`).test(l)) &&
+      !ctx.calls.logs.some(l => /^err: /.test(l) && l.includes(big)),
+      ctx.calls.logs.filter(l => l.includes(big)).join(' | '));
+  }
+
+  // 48. Batas 0 = tanpa batas.
+  {
+    const ctx = bootGrid({ n: 2, isVid: k => k === 0, sizeOf: () => 900 * 1048576 });
+    await ctx.send({ cmd: 'tg.run', settings: { stepDelay: 1, scrollRetries: 2, downloadTimeout: 3000, tgIncludeVideo: true, tgMaxSizeMB: 0 } });
+    const names = ctx.calls.clicked.filter(c => c.via === 'extension').map(c => c.name);
+    check('batas 0: video besar tetap diunduh', names.includes(`${ctx.ALL[0]}.mp4`), names.join(','));
   }
 
   console.log('\n' + pass + ' lulus, ' + fail + ' gagal');

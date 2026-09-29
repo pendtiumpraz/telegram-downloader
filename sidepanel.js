@@ -55,6 +55,7 @@ function fillSettingsUI() {
   $('#tgIncludeVideo').checked = !!SETTINGS.tgIncludeVideo;
   $('#tgScanTopics').checked   = !!SETTINGS.tgScanTopics;
   $('#tgMaxItems').value       = SETTINGS.tgMaxItems;
+  $('#tgMaxSizeMB').value      = SETTINGS.tgMaxSizeMB;
   $('#tgRootDir').value        = SETTINGS.tgRootDir;
   $('#stepDelay').value        = SETTINGS.stepDelay;
   $('#downloadTimeout').value  = SETTINGS.downloadTimeout;
@@ -66,6 +67,7 @@ async function saveSettingsFromUI() {
     tgIncludeVideo:  $('#tgIncludeVideo').checked,
     tgScanTopics:    $('#tgScanTopics').checked,
     tgMaxItems:      Number($('#tgMaxItems').value) || 0,
+    tgMaxSizeMB:     Math.max(0, Number($('#tgMaxSizeMB').value) || 0),
     tgRootDir:       $('#tgRootDir').value.trim(),
     stepDelay:       Number($('#stepDelay').value) || 500,
     downloadTimeout: Number($('#downloadTimeout').value) || 240000,
@@ -480,7 +482,7 @@ $$('.tab').forEach(b => b.onclick = () => {
   $$('.pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + b.dataset.tab));
 });
 
-for (const id of ['#tgIncludeVideo', '#tgScanTopics', '#tgMaxItems', '#tgRootDir',
+for (const id of ['#tgIncludeVideo', '#tgScanTopics', '#tgMaxItems', '#tgMaxSizeMB', '#tgRootDir',
                   '#stepDelay', '#downloadTimeout', '#scrollRetries']) {
   $(id).addEventListener('change', saveSettingsFromUI);
 }

@@ -11,7 +11,7 @@
  */
 
 (() => {
-const TG_VERSION = '1.17.0';
+const TG_VERSION = '1.18.0';
 
 if (typeof window.__WAN_TG_TEARDOWN__ === 'function') {
   try { window.__WAN_TG_TEARDOWN__(); } catch {}
@@ -35,6 +35,29 @@ class Abort extends Error { constructor() { super('Dihentikan'); this.name = 'Ab
  * chat besar itu bisa menit-menitan.
  */
 class SkipChat extends Error { constructor() { super('Dilewati'); this.name = 'SkipChat'; } }
+
+/** Berkas melebihi batas ukuran di setelan — dilewati, bukan gagal. */
+class TooBig extends Error { constructor(msg) { super(msg); this.name = 'TooBig'; } }
+
+const fmtMB = (b) => `${(b / 1048576).toFixed(b >= 1048576 * 10 ? 0 : 1)} MB`;
+
+/**
+ * Ukuran video dari URL "stream/…" Telegram — tanpa mengunduh apa pun.
+ * URL itu berisi JSON lokasi berkasnya, termasuk "size":1098299.
+ */
+function streamSize(url) {
+  try {
+    const m = decodeURIComponent(String(url || '')).match(/"size"\s*:\s*(\d+)/);
+    return m ? Number(m[1]) : null;
+  } catch { return null; }
+}
+
+/** Lempar TooBig kalau ukuran (yang diketahui) melewati batas. 0 = tanpa batas. */
+function assertSize(bytes, maxBytes, what = 'berkas') {
+  if (maxBytes && bytes && bytes > maxBytes) {
+    throw new TooBig(`${what} ${fmtMB(bytes)} melebihi batas ${fmtMB(maxBytes)}, dilewati`);
+  }
+}
 let SKIP = false;
 
 const guard = () => {
@@ -603,16 +626,20 @@ async function normalizeImage(blob) {
  * Hasilnya selalu diperiksa dari byte-nya sendiri: jawaban HTML (yang dulu
  * tersimpan sebagai .htm) tidak boleh tersimpan sebagai "sudah diunduh".
  */
-async function fetchVideo(url) {
+async function fetchVideo(url, maxBytes = 0) {
+  // Batas ukuran diperiksa SEBELUM mengunduh: ukurannya ada di URL stream/.
+  assertSize(streamSize(url), maxBytes, 'video');
+
   let firstErr;
   try {
-    return await checkVideo(await fetchPieces(url));
+    return await checkVideo(await fetchPieces(url, maxBytes));
   } catch (e) {
-    if (e instanceof Abort || e instanceof SkipChat) throw e;
+    if (e instanceof Abort || e instanceof SkipChat || e instanceof TooBig) throw e;
     firstErr = e;
   }
 
-  const viaPage = await bg('tgMainFetch', { url }).catch(e => ({ ok: false, error: e.message }));
+  const viaPage = await bg('tgMainFetch', { url, maxBytes }).catch(e => ({ ok: false, error: e.message }));
+  if (viaPage?.tooBig) throw new TooBig(`video ${fmtMB(viaPage.size)} melebihi batas ${fmtMB(maxBytes)}, dilewati`);
   if (viaPage?.ok && viaPage.blobUrl) {
     log('info', `Video diambil lewat halaman (jalur langsung: ${firstErr.message}).`);
     return checkVideo(await (await fetch(viaPage.blobUrl)).blob());
@@ -621,7 +648,7 @@ async function fetchVideo(url) {
 }
 
 /** Satu fetch biasa; potongan Range hanya kalau jawabannya 206. */
-async function fetchPieces(url) {
+async function fetchPieces(url, maxBytes = 0) {
   const abs = new URL(url, location.href).href;
   const parts = [];
   let type = '', offset = 0;
@@ -642,6 +669,9 @@ async function fetchPieces(url) {
 
     // 206 + "bytes 0-524287/1234567": masih ada potongan berikutnya.
     const m = (r.headers?.get?.('Content-Range') || '').match(/bytes\s+(\d+)-(\d+)\/(\d+|\*)/i);
+    // Pengaman kedua: ukuran total dari Content-Range, atau yang sudah terkumpul.
+    if (m && m[3] !== '*') assertSize(Number(m[3]), maxBytes, 'video');
+    assertSize(parts.reduce((n, p) => n + p.size, 0), maxBytes, 'video');
     if (r.status !== 206 || !m || !b.size) break;          // seluruh berkas sudah datang
     offset = Number(m[2]) + 1;
     if (m[3] !== '*' && offset >= Number(m[3])) break;
@@ -1026,6 +1056,8 @@ async function runOneChat(settings, { offset = null, title = null } = {}) {
   // menyimpulkan "habis" padahal jawabannya belum datang.
   const scrollRetries = Math.max(8, Number(s.scrollRetries) || 4);
   const dlTimeout = Math.max(15000, Number(s.downloadTimeout) || 240000);
+  /** Batas ukuran per berkas (setelan, MB). 0 = tanpa batas. */
+  const maxBytes = Math.max(0, Number(s.tgMaxSizeMB) || 0) * 1048576;
 
   const peer = detectPeer();
   if (!peer.peerId) throw new Error('Tidak ada pesan di layar — buka dulu chat-nya di Telegram Web.');
@@ -1260,8 +1292,12 @@ async function runOneChat(settings, { offset = null, title = null } = {}) {
           }
           if (!media) throw new Error(asVideo ? 'video tidak muncul di viewer' : 'gambar tidak muncul di viewer');
           let blob, ext;
-          if (asVideo) ({ blob, ext } = await fetchVideo(media.src));
-          else ({ blob, ext } = await normalizeImage(await (await fetch(media.src)).blob()));
+          if (asVideo) ({ blob, ext } = await fetchVideo(media.src, maxBytes));
+          else {
+            const raw = await (await fetch(media.src)).blob();
+            assertSize(raw.size, maxBytes, 'gambar');
+            ({ blob, ext } = await normalizeImage(raw));
+          }
 
           const armId = await startDownload({ bucket, key: `${mid}.${ext}`, url: media.src, blob });
           const res = await waitDownload(armId, dlTimeout);
@@ -1276,8 +1312,8 @@ async function runOneChat(settings, { offset = null, title = null } = {}) {
           }
         } catch (e) {
           if (e instanceof Abort || e instanceof SkipChat) { await closeViewer().catch(() => {}); throw e; }
-          failed++;
-          log('err', `${mid}: ${e.message}`);
+          if (e instanceof TooBig) { skipped++; log('info', `${mid}: ${e.message}.`); }
+          else { failed++; log('err', `${mid}: ${e.message}`); }
         }
       }
       stats();
@@ -1429,7 +1465,7 @@ async function runOneChat(settings, { offset = null, title = null } = {}) {
           const v = item.video || item.el.querySelector('video');
           url = v?.currentSrc || v?.src || '';
           if (!url) throw new Error('video belum dimuat Telegram — putar sekali lalu ulangi');
-          ({ blob, ext } = await fetchVideo(url));
+          ({ blob, ext } = await fetchVideo(url, maxBytes));
         } else {
           if (!item.el.isConnected) { skipped++; stats(); continue; }   // bubble sudah dibuang Telegram
           const src = await waitBlobSrc(item.img, item.el);
@@ -1464,8 +1500,8 @@ async function runOneChat(settings, { offset = null, title = null } = {}) {
         }
       } catch (e) {
         if (e instanceof Abort || e instanceof SkipChat) throw e;
-        failed++; failStreak++;
-        log('err', `${item.mid}: ${e.message}`);
+        if (e instanceof TooBig) { skipped++; log('info', `${item.mid}: ${e.message}.`); }
+        else { failed++; failStreak++; log('err', `${item.mid}: ${e.message}`); }
       }
 
       stats();

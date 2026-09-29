@@ -71,6 +71,15 @@
       <input class="inp" id="tgMaxItems" type="number" min="0" value="0">
     </div>
     <div>
+      <label class="lbl sm">Maks ukuran berkas <span class="muted">(MB, 0=∞)</span></label>
+      <input class="inp" id="tgMaxSizeMB" type="number" min="0" step="10" value="300">
+    </div>
+  </div>
+  <p class="hint">Berkas yang lebih besar dari batas ini <b>dilewati</b> (dihitung skip, tidak diunduh).
+     Untuk video, ukurannya dibaca dulu sebelum diunduh.</p>
+
+  <div class="grid2">
+    <div>
       <label class="lbl sm">Folder induk</label>
       <input class="inp" id="tgRootDir" placeholder="otomatis: D:/telegram">
     </div>

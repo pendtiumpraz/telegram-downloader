@@ -1237,7 +1237,8 @@ const check = (name, cond, extra = '') => {
    *    `videoDelay` ms kemudian;
    *  - `jumpAt`: sekali, panah kanan dari posisi itu melompat dua item.
    */
-  function bootGrid({ n, isVid, virtual = false, videoDelay = 0, jumpAt = -1, staleVideo = false, stuckAt = -1, sizeOf = null }) {
+  function bootGrid({ n, isVid, virtual = false, videoDelay = 0, jumpAt = -1, staleVideo = false, stuckAt = -1, sizeOf = null,
+                      closeMode = 'remove' }) {
     const ctx = boot({ bodyHtml: albumBubbleFor('-66', ['1']) });
     const d = ctx.w.document;
     d.body.insertAdjacentHTML('afterbegin',
@@ -1248,6 +1249,9 @@ const check = (name, cond, extra = '') => {
       ${isVid(k) ? '<span class="video-time">0:10</span>' : ''}
       <img class="media-photo" src="blob:https://web.telegram.org/g-${m}"></div>`;
     const WIN = 5;
+    const shownViewers = () => [...d.querySelectorAll('.media-viewer-whole')].filter(v => v.style.display !== 'none');
+    const topViewer = () => shownViewers().pop() || null;
+    let openWhileShown = 0, maxShown = 0;
     let top = 0, pos = -1, jumped = false;
     const opened = [];
     const drawGrid = () => {
@@ -1257,7 +1261,7 @@ const check = (name, cond, extra = '') => {
         ALL.slice(start, end).map((m) => cell(m, ALL.indexOf(m))).join('');
     };
     const render = () => {
-      const asp = d.querySelector('.media-viewer-whole .media-viewer-aspecter');
+      const asp = topViewer().querySelector('.media-viewer-aspecter');
       const m = ALL[pos];
       if (isVid(pos)) {
         asp.innerHTML = `<img class="thumbnail" src="blob:https://web.telegram.org/poster-${m}">`;
@@ -1284,7 +1288,8 @@ const check = (name, cond, extra = '') => {
         drawGrid();
       }
       const g = e.target.closest('.search-super-item');
-      if (g && !d.querySelector('.media-viewer-whole')) {
+      if (g && topViewer()) openWhileShown++;   // akan MENUMPUK di Telegram sungguhan
+      if (g && !topViewer()) {
         opened.push(g.getAttribute('data-mid'));
         pos = ALL.indexOf(g.getAttribute('data-mid'));
         // staleVideo: pemutar video yang TERTINGGAL di luar item aktif, seperti
@@ -1294,18 +1299,24 @@ const check = (name, cond, extra = '') => {
           (staleVideo ? '<div class="media-viewer-mover"><div class="ckin__player"><video src="stream/lama"></video></div></div>' : '') +
           '</div>');
         render();
+        maxShown = Math.max(maxShown, shownViewers().length);
       }
     });
     d.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') d.querySelector('.media-viewer-whole')?.remove();
-      if (e.key !== 'ArrowRight' || !d.querySelector('.media-viewer-whole') || pos >= n - 1) return;
+      if (e.key === 'Escape' && topViewer()) {
+        // remove: dibuang dari DOM · hide: disembunyikan tapi TETAP di DOM
+        // (seperti viewer Telegram) · stuck: tidak mau tertutup sama sekali.
+        if (closeMode === 'remove') topViewer().remove();
+        else if (closeMode === 'hide') topViewer().style.display = 'none';
+      }
+      if (e.key !== 'ArrowRight' || !topViewer() || pos >= n - 1) return;
       // stuckAt: viewer berhenti merespons panah kanan di posisi ini (daftar
       // internalnya belum memuat lanjutan), padahal grid masih panjang.
       if (pos === stuckAt) return;
       if (pos === jumpAt && !jumped) { jumped = true; pos = Math.min(pos + 2, n - 1); } else pos++;
       render();
     });
-    return { ...ctx, ALL, opened };
+    return { ...ctx, ALL, opened, stats: () => ({ openWhileShown, maxShown }) };
   }
   const saved = (ctx) => ctx.calls.clicked.filter(c => c.via === 'extension').map(c => c.name.replace(/\.(jpg|mp4)$/, ''));
 
@@ -1391,6 +1402,29 @@ const check = (name, cond, extra = '') => {
     await ctx.send({ cmd: 'tg.run', settings: { stepDelay: 1, scrollRetries: 2, downloadTimeout: 3000, tgIncludeVideo: true, tgMaxSizeMB: 0 } });
     const names = ctx.calls.clicked.filter(c => c.via === 'extension').map(c => c.name);
     check('batas 0: video besar tetap diunduh', names.includes(`${ctx.ALL[0]}.mp4`), names.join(','));
+  }
+
+  // 49. Keluhan: modal saling tumpuk + tidak ada yang terunduh. Viewer
+  //     Telegram yang ditutup bisa TERTINGGAL tersembunyi di DOM; script
+  //     harus membaca viewer yang tampil, bukan yang pertama.
+  {
+    const ctx = bootGrid({ n: 10, isVid: () => false, closeMode: 'hide', stuckAt: 4 });
+    await ctx.send({ cmd: 'tg.run', settings: { stepDelay: 1, scrollRetries: 2, downloadTimeout: 3000 } });
+    const names = ctx.calls.clicked.filter(c => c.via === 'extension').map(c => c.name.replace(/\.jpg$/, ''));
+    check('viewer lama tersembunyi di DOM: tetap terunduh semua',
+      names.join(',') === ctx.ALL.join(','), `${names.length}: ${names.join(',')}`);
+    check('  tidak pernah membuka item saat viewer lain masih tampil',
+      ctx.stats().openWhileShown === 0 && ctx.stats().maxShown === 1, JSON.stringify(ctx.stats()));
+  }
+
+  // 50. Viewer tidak mau tertutup sama sekali: JANGAN buka yang baru di
+  //     atasnya — berhenti dengan alasan yang jelas.
+  {
+    const ctx = bootGrid({ n: 10, isVid: () => false, closeMode: 'stuck', stuckAt: 3 });
+    await ctx.send({ cmd: 'tg.run', settings: { stepDelay: 1, scrollRetries: 2, downloadTimeout: 3000 } });
+    check('viewer macet terbuka: tidak ada modal kedua',
+      ctx.stats().openWhileShown === 0 && ctx.opened.length === 1, JSON.stringify({ ...ctx.stats(), opened: ctx.opened.length }));
+    check('  alasannya dilaporkan', ctx.calls.logs.some(l => /tidak bisa ditutup/.test(l)), ctx.calls.logs.slice(-3).join(' | '));
   }
 
   console.log('\n' + pass + ' lulus, ' + fail + ' gagal');

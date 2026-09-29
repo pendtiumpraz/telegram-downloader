@@ -11,7 +11,7 @@
  */
 
 (() => {
-const TG_VERSION = '1.18.0';
+const TG_VERSION = '1.19.0';
 
 if (typeof window.__WAN_TG_TEARDOWN__ === 'function') {
   try { window.__WAN_TG_TEARDOWN__(); } catch {}
@@ -314,10 +314,15 @@ const firstMid = () => document.querySelector('[data-mid]')?.getAttribute('data-
 /** Klik sungguhan: beberapa handler menunggu mousedown/mouseup, bukan click saja. */
 function realClick(el) {
   const o = { bubbles: true, cancelable: true, view: window };
-  for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+  for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup']) {
     try { el.dispatchEvent(new MouseEvent(type, o)); } catch { /* pointer event lama */ }
   }
-  try { el.click(); } catch {}
+  /*
+   * SATU event click saja. Dulu "click" dikirim lewat dispatchEvent DAN
+   * el.click() — dua klik per panggilan. Di grid Media itu membuka viewer
+   * DUA kali, saling tumpuk.
+   */
+  try { el.click(); } catch { el.dispatchEvent(new MouseEvent('click', o)); }
 }
 
 /**
@@ -763,7 +768,23 @@ async function openSharedMedia(peerId, timeout = 12000) {
   return gridItems(peerId).length ? true : null;
 }
 
-const viewerShown = () => document.querySelector('.media-viewer-whole');
+/**
+ * Viewer yang benar-benar TAMPIL, teratas terakhir.
+ *
+ * Telegram bisa menyisakan viewer lama di DOM (tersembunyi / sedang ditutup).
+ * Memakai `.media-viewer-whole` PERTAMA membuat script membaca viewer lama:
+ * mengira belum tertutup lalu membuka item baru di atasnya (modal
+ * menumpuk), dan mencari media di viewer yang salah (tidak ada yang
+ * terunduh).
+ */
+function viewers() {
+  return [...document.querySelectorAll('.media-viewer-whole')].filter(v => {
+    if (v.classList.contains('hiding') || v.classList.contains('is-closing')) return false;
+    const st = getComputedStyle(v);
+    return st.display !== 'none' && st.visibility !== 'hidden' && st.opacity !== '0';
+  });
+}
+const viewerShown = () => viewers().pop() || null;
 
 /**
  * Media yang sedang tampil di viewer.
@@ -782,8 +803,10 @@ const viewerShown = () => document.querySelector('.media-viewer-whole');
  * pernah terunduh. Semua pemeriksaan harus dibatasi ke wadah ini.
  */
 function activeMover() {
-  return document.querySelector('.media-viewer-mover.active')
-    || [...document.querySelectorAll('.media-viewer-aspecter')].pop()?.parentElement
+  const v = viewerShown();
+  if (!v) return null;
+  return v.querySelector('.media-viewer-mover.active')
+    || [...v.querySelectorAll('.media-viewer-aspecter')].pop()?.parentElement
     || null;
 }
 
@@ -806,12 +829,21 @@ async function viewerMedia(isVideo, timeout = 15000) {
   return best ? { src: best.currentSrc || best.getAttribute('src') } : null;
 }
 
+/**
+ * Tutup SEMUA viewer yang tampil. true = tidak ada lagi yang tampil.
+ * Pemanggil tidak boleh membuka item baru kalau ini false — itu yang dulu
+ * membuat modal saling tumpuk.
+ */
 async function closeViewer() {
-  if (!viewerShown()) return;
-  sendKey('Escape', 'Escape', 27);
-  if (await waitFor(() => !viewerShown(), 3000)) return;
-  const btn = viewerShown()?.querySelector('.media-viewer-buttons .btn-icon:last-child, [class*="close"]');
-  if (btn) { realClick(btn); await waitFor(() => !viewerShown(), 3000); }
+  for (let k = 0; k < 4 && viewerShown(); k++) {
+    const n = viewers().length;
+    sendKey('Escape', 'Escape', 27);
+    if (await waitFor(() => viewers().length < n, 2500)) continue;
+    const top = viewerShown();
+    const btn = top?.querySelector('.media-viewer-buttons .btn-icon:last-child, .media-viewer-topbar [class*="close"]');
+    if (btn) { realClick(btn); await waitFor(() => viewers().length < n, 2500); }
+  }
+  return !viewerShown();
 }
 
 /** Batas aman untuk dikirim sebagai data: URL lewat pesan extension. */
@@ -1135,8 +1167,7 @@ async function runOneChat(settings, { offset = null, title = null } = {}) {
     log('info', 'Panel Media terbuka — membuka item pertama, lalu panah kanan.');
 
     /** Elemen tampilan item yang aktif; diganti Telegram setiap berpindah item. */
-    const activeView = () => document.querySelector('.media-viewer-mover.active .media-viewer-aspecter')
-      || [...document.querySelectorAll('.media-viewer-aspecter')].pop() || null;
+    const activeView = () => activeMover()?.querySelector('.media-viewer-aspecter') || activeMover();
     /** Sumber media yang sedang tampil — penanda item mana yang terbuka. */
     const viewSrcs = () => [...(activeView()?.querySelectorAll('img, video') || [])]
       .map(m => m.currentSrc || m.getAttribute('src') || '').filter(Boolean);
@@ -1145,7 +1176,9 @@ async function runOneChat(settings, { offset = null, title = null } = {}) {
 
     /** Buka item ber-mid ini dari grid (pembuka pertama, atau penyelarasan ulang). */
     const openFromGrid = async (mid) => {
-      await closeViewer();
+      if (!await closeViewer()) {
+        throw new Error('viewer tidak bisa ditutup — berhenti supaya modal tidak saling tumpuk');
+      }
       const g = await findGridItem(mid);
       if (!g) return false;
       try { g.scrollIntoView({ block: 'nearest' }); } catch {}
@@ -1340,9 +1373,9 @@ async function runOneChat(settings, { offset = null, title = null } = {}) {
       };
       if (i + 1 >= list.length) { log('ok', 'Item terakhir di grid selesai.'); break; }
       let moved = await step(key);
-      if (!moved) {
-        // Viewer mungkin sedang memuat lanjutan — beri waktu, coba sekali lagi.
-        await pause(3);
+      for (let t = 0; t < 2 && !moved; t++) {
+        // Viewer mungkin sedang memuat lanjutan — beri waktu, coba lagi.
+        await pause(3 + t * 4);
         moved = await step(key);
       }
       if (!moved && i === 0 && key === 'ArrowRight') {

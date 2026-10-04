@@ -11,7 +11,7 @@
  */
 
 (() => {
-const TG_VERSION = '1.19.0';
+const TG_VERSION = '1.20.0';
 
 if (typeof window.__WAN_TG_TEARDOWN__ === 'function') {
   try { window.__WAN_TG_TEARDOWN__(); } catch {}
@@ -1090,6 +1090,16 @@ async function runOneChat(settings, { offset = null, title = null } = {}) {
   const dlTimeout = Math.max(15000, Number(s.downloadTimeout) || 240000);
   /** Batas ukuran per berkas (setelan, MB). 0 = tanpa batas. */
   const maxBytes = Math.max(0, Number(s.tgMaxSizeMB) || 0) * 1048576;
+  /*
+   * Lompat ke tujuan berikutnya setelah N media BERTURUT-TURUT sudah ada.
+   * Urutannya dari yang terbaru, jadi deretan panjang "sudah ada" berarti
+   * sisanya sudah pernah diunduh — tidak perlu menyusuri ribuan item lagi.
+   * Yang mereset hitungan: unduhan baru atau kegagalan (masih ada yang belum
+   * punya). Dilewati karena kebesaran / video dimatikan tidak dihitung.
+   * 0 = mati.
+   */
+  const skipStreakMax = Math.max(0, Number(s.tgSkipStreak ?? 200) || 0);
+  let dupStreak = 0;
 
   const peer = detectPeer();
   if (!peer.peerId) throw new Error('Tidak ada pesan di layar — buka dulu chat-nya di Telegram Web.');
@@ -1314,6 +1324,12 @@ async function runOneChat(settings, { offset = null, title = null } = {}) {
         skipped++;
       } else if (processed++, ONDISK.has(mid) || (await bg('tgCheckDup', { bucket, mid })).dup) {
         skipped++;
+        if (skipStreakMax && ++dupStreak >= skipStreakMax) {
+          log('ok', `${dupStreak} media berturut-turut sudah ada — sisanya dianggap sudah terunduh, lanjut ke tujuan berikutnya.`);
+          await closeViewer();
+          stats();
+          return { ok: true, processed, saved, skipped, failed, reason: 'sudah-terunduh' };
+        }
       } else {
         try {
           let asVideo = isVideo;
@@ -1336,17 +1352,19 @@ async function runOneChat(settings, { offset = null, title = null } = {}) {
           const res = await waitDownload(armId, dlTimeout);
           if (res.ok) {
             saved++;
+            dupStreak = 0;
             ONDISK.add(mid);
             await bg('markKey', { email: bucket, key: mid });
           } else {
             failed++;
+            dupStreak = 0;
             log('err', `${mid}: ${res.error}`);
             await bg('cancelArm').catch(() => {});
           }
         } catch (e) {
           if (e instanceof Abort || e instanceof SkipChat) { await closeViewer().catch(() => {}); throw e; }
           if (e instanceof TooBig) { skipped++; log('info', `${mid}: ${e.message}.`); }
-          else { failed++; log('err', `${mid}: ${e.message}`); }
+          else { failed++; dupStreak = 0; log('err', `${mid}: ${e.message}`); }
         }
       }
       stats();
@@ -1482,10 +1500,15 @@ async function runOneChat(settings, { offset = null, title = null } = {}) {
       processed++;
       try {
         // Berkasnya sudah ada di folder: tidak perlu tanya siapa-siapa lagi.
-        if (ONDISK.has(item.mid)) { skipped++; stats(); continue; }
-
-        const dup = await bg('tgCheckDup', { bucket, mid: item.mid });
-        if (dup.dup) { skipped++; stats(); continue; }
+        const already = ONDISK.has(item.mid) || (await bg('tgCheckDup', { bucket, mid: item.mid })).dup;
+        if (already) {
+          skipped++; stats();
+          if (skipStreakMax && ++dupStreak >= skipStreakMax) {
+            log('ok', `${dupStreak} media berturut-turut sudah ada — sisanya dianggap sudah terunduh, lanjut ke tujuan berikutnya.`);
+            return { ok: true, processed, saved, skipped, failed, reason: 'sudah-terunduh' };
+          }
+          continue;
+        }
 
         let url, ext, blob = null, revoke = null;
 
@@ -1523,18 +1546,18 @@ async function runOneChat(settings, { offset = null, title = null } = {}) {
         if (revoke) URL.revokeObjectURL(revoke);
 
         if (res.ok) {
-          saved++; failStreak = 0;
+          saved++; failStreak = 0; dupStreak = 0;
           ONDISK.add(item.mid);
           await bg('markKey', { email: bucket, key: item.mid });
         } else {
-          failed++; failStreak++;
+          failed++; failStreak++; dupStreak = 0;
           log('err', `${item.mid}: ${res.error}`);
           await bg('cancelArm').catch(() => {});
         }
       } catch (e) {
         if (e instanceof Abort || e instanceof SkipChat) throw e;
         if (e instanceof TooBig) { skipped++; log('info', `${item.mid}: ${e.message}.`); }
-        else { failed++; failStreak++; log('err', `${item.mid}: ${e.message}`); }
+        else { failed++; failStreak++; dupStreak = 0; log('err', `${item.mid}: ${e.message}`); }
       }
 
       stats();

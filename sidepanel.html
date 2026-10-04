@@ -78,6 +78,12 @@
   <p class="hint">Berkas yang lebih besar dari batas ini <b>dilewati</b> (dihitung skip, tidak diunduh).
      Untuk video, ukurannya dibaca dulu sebelum diunduh.</p>
 
+  <label class="lbl sm">Lompat setelah N "sudah ada" berturut-turut <span class="muted">(0=mati)</span></label>
+  <input class="inp" id="tgSkipStreak" type="number" min="0" step="10" value="200">
+  <p class="hint">Urutannya dari yang terbaru, jadi kalau sebanyak ini berturut-turut sudah ada di folder,
+     sisanya dianggap sudah terunduh: lanjut ke <b>topik berikutnya</b>, atau <b>grup berikutnya</b>
+     kalau topiknya habis.</p>
+
   <div class="grid2">
     <div>
       <label class="lbl sm">Folder induk</label>

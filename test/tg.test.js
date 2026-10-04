@@ -1238,8 +1238,8 @@ const check = (name, cond, extra = '') => {
    *  - `jumpAt`: sekali, panah kanan dari posisi itu melompat dua item.
    */
   function bootGrid({ n, isVid, virtual = false, videoDelay = 0, jumpAt = -1, staleVideo = false, stuckAt = -1, sizeOf = null,
-                      closeMode = 'remove' }) {
-    const ctx = boot({ bodyHtml: albumBubbleFor('-66', ['1']) });
+                      closeMode = 'remove', onDisk = [] }) {
+    const ctx = boot({ bodyHtml: albumBubbleFor('-66', ['1']), onDisk });
     const d = ctx.w.document;
     d.body.insertAdjacentHTML('afterbegin',
       '<div class="chat-info-container"><div class="chat-info"><div class="person"><div class="user-title">' +
@@ -1425,6 +1425,31 @@ const check = (name, cond, extra = '') => {
     check('viewer macet terbuka: tidak ada modal kedua',
       ctx.stats().openWhileShown === 0 && ctx.opened.length === 1, JSON.stringify({ ...ctx.stats(), opened: ctx.opened.length }));
     check('  alasannya dilaporkan', ctx.calls.logs.some(l => /tidak bisa ditutup/.test(l)), ctx.calls.logs.slice(-3).join(' | '));
+  }
+
+  // 51. Lompat setelah N "sudah ada" berturut-turut: sisanya dianggap sudah
+  //     terunduh, tujuan ini selesai (antrean di panel lanjut ke berikutnya).
+  {
+    const ALLm = Array.from({ length: 12 }, (_, k) => String(5000 - k));
+    const ctx = bootGrid({ n: 12, isVid: () => false, onDisk: ALLm.slice(2, 9) });
+    const r = await ctx.send({ cmd: 'tg.run', settings: { stepDelay: 1, scrollRetries: 2, downloadTimeout: 3000, tgSkipStreak: 3 } });
+    const names = ctx.calls.clicked.filter(c => c.via === 'extension').map(c => c.name.replace(/\.jpg$/, ''));
+    check('3 "sudah ada" berturut-turut: berhenti, sisanya tidak disusuri',
+      names.join(',') === ALLm.slice(0, 2).join(',') && r?.reason === 'sudah-terunduh',
+      `${names.join(',')} / ${r?.reason}`);
+    check('  alasannya dicatat', ctx.calls.logs.some(l => /3 media berturut-turut sudah ada/.test(l)), ctx.calls.logs.slice(-3).join(' | '));
+  }
+
+  // 52. Deretan "sudah ada" yang terputus unduhan baru dihitung ulang dari nol.
+  {
+    const ALLm = Array.from({ length: 8 }, (_, k) => String(5000 - k));
+    // sudah ada: 0,1 · baru: 2 · sudah ada: 3,4 · baru: 5,6,7  (batas 3 tidak pernah tercapai)
+    const ctx = bootGrid({ n: 8, isVid: () => false, onDisk: [ALLm[0], ALLm[1], ALLm[3], ALLm[4]] });
+    const r = await ctx.send({ cmd: 'tg.run', settings: { stepDelay: 1, scrollRetries: 2, downloadTimeout: 3000, tgSkipStreak: 3 } });
+    const names = ctx.calls.clicked.filter(c => c.via === 'extension').map(c => c.name.replace(/\.jpg$/, ''));
+    check('hitungan direset oleh unduhan baru: semua yang baru tetap terunduh',
+      names.join(',') === [ALLm[2], ALLm[5], ALLm[6], ALLm[7]].join(',') && r?.reason === 'habis',
+      `${names.join(',')} / ${r?.reason}`);
   }
 
   console.log('\n' + pass + ' lulus, ' + fail + ' gagal');

@@ -13,5 +13,7 @@ export const DEFAULTS = {
   /** Berhenti setelah N media. 0 = tanpa batas. */
   tgMaxItems: 0,
   /** Lewati berkas yang lebih besar dari ini (MB). 0 = tanpa batas. */
-  tgMaxSizeMB: 300
+  tgMaxSizeMB: 300,
+  /** Pindah ke chat/topik berikutnya setelah N media berturut-turut sudah ada. 0 = mati. */
+  tgSkipStreak: 200
 };
